@@ -1,0 +1,114 @@
+import { Button, GridBox, LineEdit, HorizontalBox, VerticalBox, ComboBox, StandardListView, StandardButton, TextEdit, ListView, CheckBox } from "std-widgets.slint";
+
+component DiffPane inherits VerticalBox {
+    in property <[string]> lines;
+    in property <[string]> diff;
+    in property <string> title;
+
+    property <[string]> current;
+
+    callback import();
+    callback export();
+    callback open();
+
+    Text {
+        text: title;
+    }
+
+    HorizontalLayout {
+        spacing: 5px;
+
+        Button {
+            text: "Open";
+            clicked => {
+                open()
+            }
+        }
+
+        Button {
+            text: "Import";
+            clicked => {
+                import()
+            }
+        }
+
+        Button {
+            text: "Export";
+            clicked => {
+                export()
+            }
+        }
+
+        is-diff := CheckBox {
+            text: "Diff";
+            checked: true;
+        }
+    }
+
+    ListView {
+        for line in current: Text {
+            text: line;
+        }
+    }
+
+    states [
+        diff when is-diff.checked: {
+            root.current: root.diff;
+        }
+        all when !is-diff.checked: {
+            root.current: root.lines;
+        }
+    ]
+}
+
+export component AppWindow inherits Dialog {
+    // default-font-family: "monospace";
+	default-font-size: 16px;
+
+    in property <[string]> r-lines;
+    in property <[string]> l-lines;
+	in property <string> r-title;
+    in property <[string]> r-diff;
+    in property <[string]> l-diff;
+	in property <string> l-title;
+
+    callback r-import();
+    callback r-export();
+    callback r-open();
+
+    callback l-import();
+    callback l-export();
+    callback l-open();
+
+    HorizontalLayout {
+        DiffPane {
+            lines: l-lines;
+            diff: l-diff;
+			title: l-title;
+            export => {
+                l-export()
+            }
+            import => {
+                l-import()
+            }
+            open => {
+                l-open()
+            }
+        }
+
+        DiffPane {
+            lines: r-lines;
+            diff: r-diff;
+			title: r-title;
+            export => {
+                r-export()
+            }
+            import => {
+                r-import()
+            }
+            open => {
+                r-open()
+            }
+        }
+    }
+}
