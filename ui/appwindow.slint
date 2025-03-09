@@ -64,13 +64,15 @@ component DiffPane inherits VerticalBox {
 export component AppWindow inherits Dialog {
     // default-font-family: "monospace";
 	default-font-size: 16px;
+    title: "Dir Diff";
+    icon: @image-url("../resources/icon.svg");
 
     in property <[string]> r-lines;
     in property <[string]> l-lines;
-	in property <string> r-title;
+    in property <string> r-title;
     in property <[string]> r-diff;
     in property <[string]> l-diff;
-	in property <string> l-title;
+    in property <string> l-title;
 
     callback r-import();
     callback r-export();
@@ -84,7 +86,7 @@ export component AppWindow inherits Dialog {
         DiffPane {
             lines: l-lines;
             diff: l-diff;
-			title: l-title;
+            title: l-title;
             export => {
                 l-export()
             }
@@ -99,7 +101,7 @@ export component AppWindow inherits Dialog {
         DiffPane {
             lines: r-lines;
             diff: r-diff;
-			title: r-title;
+            title: r-title;
             export => {
                 r-export()
             }
