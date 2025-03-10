@@ -1,41 +1,40 @@
 import { Button, GridBox, LineEdit, HorizontalBox, VerticalBox, ComboBox, StandardListView, StandardButton, TextEdit, ListView, CheckBox } from "std-widgets.slint";
 
+export enum PaneId { left, right }
+
+export struct Line {
+	text: string,
+	striked: bool,
+}
+
 component DiffPane inherits VerticalBox {
-    in property <[string]> lines;
-    in property <[string]> diff;
+    in property <[Line]> lines;
+    in property <[Line]> diff;
     in property <string> title;
 
-    property <[string]> current;
+    property <[Line]> current: diff;
 
     callback import();
     callback export();
     callback open();
-
-    Text {
-        text: title;
-    }
+    callback reload();
 
     HorizontalLayout {
         spacing: 5px;
+        alignment: stretch;
 
-        Button {
-            text: "Open";
-            clicked => {
-                open()
-            }
+        Text {
+            text: title;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
         }
 
         Button {
-            text: "Import";
+            text: "Reload";
             clicked => {
-                import()
-            }
-        }
-
-        Button {
-            text: "Export";
-            clicked => {
-                export()
+                reload()
             }
         }
 
@@ -45,16 +44,56 @@ component DiffPane inherits VerticalBox {
         }
     }
 
+    HorizontalLayout {
+        spacing: 5px;
+
+        Button {
+            text: "Open Folder";
+            clicked => {
+                open()
+            }
+        }
+
+        Button {
+            text: "Import JSON";
+            clicked => {
+                import()
+            }
+        }
+
+        Button {
+            text: "Export JSON";
+            clicked => {
+                export()
+            }
+        }
+    }
+
     ListView {
-        for line in current: Text {
-            text: line;
+        for line in current: Rectangle {
+            width: parent.width;
+            height: 24px;
+            TouchArea {
+                clicked => {
+                    line.striked = !line.striked;
+                }
+            }
+
+            text := Text {
+                x: 0;
+                text: line.text;
+                horizontal-alignment: left;
+            }
+
+            states [
+                striked when line.striked: {
+                    text.color: gray;
+                }
+            ]
         }
     }
 
     states [
-        diff when is-diff.checked: {
-            root.current: root.diff;
-        }
         all when !is-diff.checked: {
             root.current: root.lines;
         }
@@ -65,51 +104,67 @@ export component AppWindow inherits Dialog {
     // default-font-family: "monospace";
 	default-font-size: 16px;
     title: "Dir Diff";
-    icon: @image-url("../resources/icon.svg");
+    icon: app-icon;
 
-    in property <[string]> r-lines;
-    in property <[string]> l-lines;
-    in property <string> r-title;
-    in property <[string]> r-diff;
-    in property <[string]> l-diff;
-    in property <string> l-title;
+    in property <image> app-icon;
 
-    callback r-import();
-    callback r-export();
-    callback r-open();
+    public function set-lines(which: PaneId, lines: [Line]) {
+        if which == PaneId.left {
+            left.lines = lines;
+        } else {
+            right.lines = lines;
+        }
+    }
 
-    callback l-import();
-    callback l-export();
-    callback l-open();
+    public function set-diff(which: PaneId, lines: [Line]) {
+        if which == PaneId.left {
+            left.diff = lines;
+        } else {
+            right.diff = lines;
+        }
+    }
+
+    public function set-title(which: PaneId, title: string) {
+        if which == PaneId.left {
+            left.title = title;
+        } else {
+            right.title = title;
+        }
+    }
+
+    callback import(PaneId);
+    callback export(PaneId);
+    callback open(PaneId);
+    callback reload(PaneId);
 
     HorizontalLayout {
-        DiffPane {
-            lines: l-lines;
-            diff: l-diff;
-            title: l-title;
+        left := DiffPane {
             export => {
-                l-export()
+                root.export(PaneId.left)
             }
             import => {
-                l-import()
+                root.import(PaneId.left)
             }
             open => {
-                l-open()
+                root.open(PaneId.left)
+            }
+            reload => {
+                root.reload(PaneId.left)
             }
         }
 
-        DiffPane {
-            lines: r-lines;
-            diff: r-diff;
-            title: r-title;
+        right := DiffPane {
             export => {
-                r-export()
+                root.export(PaneId.right)
             }
             import => {
-                r-import()
+                root.import(PaneId.right)
             }
             open => {
-                r-open()
+                root.open(PaneId.right)
+            }
+            reload => {
+                root.reload(PaneId.right)
             }
         }
     }
