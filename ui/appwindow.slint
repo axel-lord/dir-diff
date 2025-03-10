@@ -12,30 +12,30 @@ component DiffPane inherits VerticalBox {
     in property <[Line]> diff;
     in property <string> title;
 
-    property <[Line]> current: diff;
+    property <[Line]> current: is-diff.checked ? diff : lines;
 
     callback import();
     callback export();
     callback open();
     callback reload();
 
+    states [
+        no-title when title == "": {
+            title-text.color: gray;
+            title-text.text: "<None>";
+        }
+    ]
+
     HorizontalLayout {
         spacing: 5px;
         alignment: stretch;
 
-        Text {
+        title-text := Text {
             text: title;
             horizontal-alignment: left;
             vertical-alignment: center;
             horizontal-stretch: 1;
             vertical-stretch: 1;
-        }
-
-        Button {
-            text: "Reload";
-            clicked => {
-                reload()
-            }
         }
 
         is-diff := CheckBox {
@@ -63,41 +63,48 @@ component DiffPane inherits VerticalBox {
 
         Button {
             text: "Export JSON";
+            enabled: title != "";
             clicked => {
                 export()
             }
         }
-    }
 
-    ListView {
-        for line in current: Rectangle {
-            width: parent.width;
-            height: 24px;
-            TouchArea {
-                clicked => {
-                    line.striked = !line.striked;
-                }
+        Button {
+            text: "Reload";
+            enabled: title != "";
+            clicked => {
+                reload()
             }
-
-            text := Text {
-                x: 0;
-                text: line.text;
-                horizontal-alignment: left;
-            }
-
-            states [
-                striked when line.striked: {
-                    text.color: gray;
-                }
-            ]
         }
     }
 
-    states [
-        all when !is-diff.checked: {
-            root.current: root.lines;
+    Rectangle {
+        background: #333;
+        ListView {
+            for line[i] in current: Rectangle {
+                width: parent.width;
+                height: 24px;
+                background: mod(i, 2) == 0 ? transparent : #222;
+                TouchArea {
+                    clicked => {
+                        line.striked = !line.striked;
+                    }
+                }
+
+                text := Text {
+                    x: 5px;
+                    text: line.text;
+                    horizontal-alignment: left;
+                }
+
+                states [
+                    striked when line.striked: {
+                        text.color: gray;
+                    }
+                ]
+            }
         }
-    ]
+    }
 }
 
 export component AppWindow inherits Dialog {
@@ -105,6 +112,8 @@ export component AppWindow inherits Dialog {
 	default-font-size: 16px;
     title: "Dir Diff";
     icon: app-icon;
+    min-width: 500px;
+    min-height: 600px;
 
     in property <image> app-icon;
 
@@ -137,8 +146,17 @@ export component AppWindow inherits Dialog {
     callback open(PaneId);
     callback reload(PaneId);
 
-    HorizontalLayout {
+    rect := Rectangle {
+
+        function is-portrait() -> bool {
+            rect.width < rect.height || rect.width < 1000px
+        }
+
         left := DiffPane {
+            width: !is-portrait() ? parent.width / 2 : parent.width;
+            height: !is-portrait() ? parent.height : parent.height / 2;
+            x: 0;
+            y: 0;
             export => {
                 root.export(PaneId.left)
             }
@@ -154,6 +172,10 @@ export component AppWindow inherits Dialog {
         }
 
         right := DiffPane {
+            width: !is-portrait() ? parent.width / 2 : parent.width;
+            height: !is-portrait() ? parent.height : parent.height / 2;
+            x: !is-portrait() ? parent.width / 2 : 0;
+            y: !is-portrait() ? 0 : parent.height / 2;
             export => {
                 root.export(PaneId.right)
             }
