@@ -20,3 +20,12 @@ embed-resource = "3.0.2"
 image = "0.25.5"
 resvg = "0.45.0"
 slint-build = "1.10.0"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
