@@ -10,24 +10,27 @@ use ::std::{
 use ::clap::Parser;
 use ::color_eyre::Result;
 use ::rfd::AsyncFileDialog;
-use ::slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
+use ::slint::{
+    ComponentHandle, Image, ModelExt, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString,
+    VecModel,
+};
 
 slint::include_modules!();
+
+const ICON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
 
 /// Compare the contents of two directories.
 #[derive(Debug, Parser)]
 #[command(version, about, author, long_about = None)]
 struct Cli {
     /// First directory/exported file.
-    #[arg(short, long)]
     left: Option<PathBuf>,
 
     /// Second directory/exported file.
-    #[arg(short, long)]
     right: Option<PathBuf>,
 }
 
-type HashSetCell = Rc<RefCell<HashSet<String>>>;
+type HashSetCell = Rc<RefCell<(PathBuf, HashSet<String>)>>;
 
 #[derive(Default)]
 struct State {
@@ -36,7 +39,7 @@ struct State {
 }
 
 impl State {
-    fn read_dir(path: impl AsRef<Path>) -> HashSet<String> {
+    fn read_dir(path: impl AsRef<Path>) -> (PathBuf, HashSet<String>) {
         let path = path.as_ref();
         ::std::fs::read_dir(path)
             .map(|read_dir| {
@@ -59,166 +62,144 @@ impl State {
                     Default::default()
                 }))
             })
+            .map(|set| (path.to_path_buf(), set))
             .unwrap_or_else(|err: ::std::io::Error| {
                 ::log::error!("failed to read directory/file '{path:?}, {err}'");
                 Default::default()
             })
     }
 
-    fn lines(set: &HashSet<String>) -> ModelRc<SharedString> {
-        ModelRc::new(set.iter().map(SharedString::from).collect::<VecModel<_>>())
-    }
-
-    fn diff(a: &HashSet<String>, b: &HashSet<String>) -> ModelRc<SharedString> {
+    fn lines(set: &HashSet<String>) -> ModelRc<Line> {
         ModelRc::new(
-            a.difference(b)
-                .map(SharedString::from)
-                .collect::<VecModel<_>>(),
+            set.iter()
+                .map(|text| Line {
+                    striked: false,
+                    text: SharedString::from(text),
+                })
+                .collect::<VecModel<_>>()
+                .sort_by(|a, b| a.text.cmp(&b.text)),
         )
     }
 
-    fn diff_pair(&self) -> [ModelRc<SharedString>; 2] {
-        [
-            Self::diff(&self.left.borrow(), &self.right.borrow()),
-            Self::diff(&self.right.borrow(), &self.left.borrow()),
-        ]
+    fn diff(a: &HashSet<String>, b: &HashSet<String>) -> ModelRc<Line> {
+        ModelRc::new(
+            a.difference(b)
+                .map(|text| Line {
+                    striked: false,
+                    text: SharedString::from(text),
+                })
+                .collect::<VecModel<_>>()
+                .sort_by(|a, b| a.text.cmp(&b.text)),
+        )
     }
 
-    fn lines_pair(&self) -> [ModelRc<SharedString>; 2] {
-        [
-            Self::lines(&self.left.borrow()),
-            Self::lines(&self.right.borrow()),
-        ]
+    fn get_set(&self, id: PaneId) -> &HashSetCell {
+        match id {
+            PaneId::Left => &self.left,
+            PaneId::Right => &self.right,
+        }
+    }
+
+    fn complement_id(id: PaneId) -> PaneId {
+        match id {
+            PaneId::Left => PaneId::Right,
+            PaneId::Right => PaneId::Left,
+        }
     }
 
     fn update(&self, ui: &AppWindow) {
-        let [l_diff, r_diff] = self.diff_pair();
-        let [l_lines, r_lines] = self.lines_pair();
+        for id in [PaneId::Left, PaneId::Right] {
+            let set = self.get_set(id).borrow();
 
-        ui.set_l_diff(l_diff);
-        ui.set_r_diff(r_diff);
-
-        ui.set_l_lines(l_lines);
-        ui.set_r_lines(r_lines);
+            ui.invoke_set_lines(id, Self::lines(&set.1));
+            ui.invoke_set_diff(
+                id,
+                Self::diff(&set.1, &self.get_set(Self::complement_id(id)).borrow().1),
+            );
+            ui.invoke_set_title(id, set.0.to_string_lossy().into_owned().into());
+        }
     }
 
     fn bind(self: Rc<Self>, ui: &AppWindow) {
-        ui.on_l_open(State::open(
-            ui.as_weak(),
-            self.clone(),
-            self.left.clone(),
-            State::set_l_title(ui.as_weak()),
-        ));
-        ui.on_r_open(State::open(
-            ui.as_weak(),
-            self.clone(),
-            self.right.clone(),
-            State::set_r_title(ui.as_weak()),
-        ));
+        ui.on_open({
+            let ui = ui.as_weak();
+            let state = self.clone();
+            move |id| {
+                let ui = ui.clone();
+                let state = state.clone();
+                ::slint::spawn_local(async move {
+                    let handle = AsyncFileDialog::new()
+                        .set_title("Open folder...")
+                        .pick_folder()
+                        .await?;
 
-        ui.on_l_import(State::import(
-            ui.as_weak(),
-            self.clone(),
-            self.left.clone(),
-            State::set_l_title(ui.as_weak()),
-        ));
-        ui.on_r_import(State::import(
-            ui.as_weak(),
-            self.clone(),
-            self.right.clone(),
-            State::set_r_title(ui.as_weak()),
-        ));
+                    state.get_set(id).replace(Self::read_dir(handle.path()));
+                    state.update(&ui.unwrap());
 
-        ui.on_l_export(State::export(self.left.clone()));
-        ui.on_r_export(State::export(self.right.clone()));
-    }
+                    Some(())
+                })
+                .unwrap();
+            }
+        });
+        ui.on_import({
+            let ui = ui.as_weak();
+            let state = self.clone();
+            move |id| {
+                let ui = ui.clone();
+                let state = state.clone();
+                ::slint::spawn_local(async move {
+                    let handle = AsyncFileDialog::new()
+                        .set_title("Import list...")
+                        .add_filter("JSON", &["json"])
+                        .pick_file()
+                        .await?;
 
-    fn open(
-        ui: Weak<AppWindow>,
-        state: Rc<Self>,
-        set: HashSetCell,
-        set_title: impl 'static + Clone + Fn(String),
-    ) -> impl Fn() {
-        move || {
-            let set = set.clone();
-            let state = state.clone();
-            let ui = ui.clone();
-            let set_title = set_title.clone();
-            ::slint::spawn_local(async move {
-                let handle = AsyncFileDialog::new()
-                    .set_title("Open folder...")
-                    .pick_folder()
-                    .await?;
+                    state.get_set(id).replace(Self::read_dir(handle.path()));
+                    state.update(&ui.unwrap());
 
-                set.replace(Self::read_dir(handle.path()));
+                    Some(())
+                })
+                .unwrap();
+            }
+        });
+        ui.on_export({
+            let state = self.clone();
+            move |id| {
+                let state = state.clone();
+                ::slint::spawn_local(async move {
+                    let handle = AsyncFileDialog::new()
+                        .set_title("Export list...")
+                        .add_filter("JSON", &["json"])
+                        .save_file()
+                        .await?;
+
+                    let path = handle.path();
+                    ::std::fs::write(
+                        path,
+                        ::serde_json::to_string_pretty::<HashSet<String>>(
+                            &state.get_set(id).borrow().1,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap_or_else(|err| ::log::error!("write to {path:?} failed, {err}"));
+
+                    Some(())
+                })
+                .unwrap();
+            }
+        });
+
+        ui.on_reload({
+            let ui = ui.as_weak();
+            let state = self.clone();
+            move |id| {
+                let set = state.get_set(id);
+                let content = Self::read_dir(&set.borrow().0);
+
+                set.replace(content);
                 state.update(&ui.unwrap());
-                set_title(handle.path().to_string_lossy().into_owned());
-                Some(())
-            })
-            .unwrap();
-        }
-    }
-
-    fn import(
-        ui: Weak<AppWindow>,
-        state: Rc<Self>,
-        set: HashSetCell,
-        set_title: impl 'static + Clone + Fn(String),
-    ) -> impl Fn() {
-        move || {
-            let set = set.clone();
-            let state = state.clone();
-            let ui = ui.clone();
-            let set_title = set_title.clone();
-            ::slint::spawn_local(async move {
-                let handle = AsyncFileDialog::new()
-                    .set_title("Import list...")
-                    .add_filter("JSON", &["json"])
-                    .pick_file()
-                    .await?;
-
-                set.replace(Self::read_dir(handle.path()));
-                state.update(&ui.unwrap());
-                set_title(handle.path().to_string_lossy().into_owned());
-                Some(())
-            })
-            .unwrap();
-        }
-    }
-
-    fn export(set: HashSetCell) -> impl Fn() {
-        move || {
-            let set = set.clone();
-            ::slint::spawn_local(async move {
-                let handle = AsyncFileDialog::new()
-                    .set_title("Export list...")
-                    .add_filter("JSON", &["json"])
-                    .save_file()
-                    .await?;
-
-                let path = handle.path();
-                ::std::fs::write(
-                    path,
-                    ::serde_json::to_string_pretty::<HashSet<String>>(&set.borrow()).unwrap(),
-                )
-                .unwrap_or_else(|err| ::log::error!("write to {path:?} failed, {err}"));
-
-                Some(())
-            })
-            .unwrap();
-        }
-    }
-
-    fn set_l_title(ui: Weak<AppWindow>) -> impl 'static + Clone + Fn(String) {
-        move |title| {
-            ui.unwrap().set_l_title(title.into());
-        }
-    }
-
-    fn set_r_title(ui: Weak<AppWindow>) -> impl 'static + Clone + Fn(String) {
-        move |title| {
-            ui.unwrap().set_r_title(title.into());
-        }
+            }
+        });
     }
 }
 
@@ -231,17 +212,23 @@ fn main() -> Result<()> {
     let Cli { left, right } = Cli::parse();
 
     let state = Rc::new(State::default());
+    let icon = ::image::load_from_memory_with_format(ICON, ::image::ImageFormat::Png)?.into_rgba8();
+    let icon_buf = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+        icon.as_raw(),
+        icon.width(),
+        icon.height(),
+    );
+    let icon = Image::from_rgba8(icon_buf);
 
     let ui = AppWindow::new()?;
+    ui.set_app_icon(icon);
 
     if let Some(path) = left {
         state.left.replace(State::read_dir(&path));
-        ui.set_l_title(SharedString::from(path.to_string_lossy().into_owned()));
     }
 
     if let Some(path) = right {
         state.right.replace(State::read_dir(&path));
-        ui.set_r_title(SharedString::from(path.to_string_lossy().into_owned()));
     }
 
     state.update(&ui);
